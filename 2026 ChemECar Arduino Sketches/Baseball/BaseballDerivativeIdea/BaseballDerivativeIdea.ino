@@ -1,68 +1,76 @@
-//float thresholdVoltage;
-//int threshold;
 bool carRunning;
 float voltage;
-float prevVoltage;
-bool restartCar = true;  //For debugging threshold
+bool restartCar = true;
 int count;
 float voltages[3] = {0};
-float times[3] = {0};
+unsigned long times[3] = {0}; // use unsigned long for millis()
 float derLight;
-float difVoltage1;
-float difTime1;
-float lightSlope1;
-float difVoltage2;
-float difTime2;
-float lightSlope2;
-float lightSlope;
+
+// Number of ADC samples per averaged reading
+const int NUM_SAMPLES = 10;
 
 void setup() {
-  // put your setup code here, to run once:
   pinMode(6, OUTPUT);
   pinMode(18, INPUT);  // Pin A4
   carRunning = true;
-  // thresholdVoltage = 2.5;
-  // threshold = thresholdVoltage * 1023 / 5;  // Turning a threshold voltage into a value understood by Arduino
   count = 0;
   Serial.begin(9600);
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
-  voltage = float(analogRead(18)) * 3.3 / 1023;
-  for (int i=0; i<2; i++)
-  {
-  voltages[i] = voltages[i+1]; 
-  times[i] = times[i+1];
+  // Read smoothed voltage
+  voltage = readAveragedVoltage(18, NUM_SAMPLES);
+
+  // Shift arrays (keep last 3 samples)
+  for (int i = 0; i < 2; i++) {
+    voltages[i] = voltages[i+1]; 
+    times[i] = times[i+1];
   }
+
+  // Store new sample + time
   voltages[2] = voltage;
   times[2] = millis();
-  derLight = changeinLight(voltages, times);
-  Serial.println(derLight);
-  delay(200);
+
+  // Compute derivative
+  derLight = changeinLight(times, voltages);
+
+  // Print results
+  Serial.print(times[2]/1000.0);
+  Serial.print(", ");
+  Serial.print(voltage, 3);
+  Serial.print(", ");
+  Serial.println(derLight, 6);
+
+  delay(200); // control logging rate
 }
 
-float changeinLight(float times[], float voltages[]) {
-//Compute new derivative 
-difVoltage1 = voltages[2]-voltages[1];
-difTime1 = times[2]-times[1];
-lightSlope1 = 0;
-difVoltage2 = voltages[1]-voltages[0];
-difTime2 = times[1]-times[0];
-lightSlope2 = 0;
-lightSlope = 0;
-
-if (difTime1 != 0)
-{
-  lightSlope1 = difVoltage1/difTime1; 
+// --- Moving average voltage reader ---
+float readAveragedVoltage(int pin, int samples) {
+  long total = 0;
+  for (int i = 0; i < samples; i++) {
+    total += analogRead(pin);
+  }
+  float avgReading = float(total) / samples;
+  return avgReading * 3.3 / 1023.0; // convert to volts
 }
 
-if (difTime2 != 0)
-{
-  lightSlope2 = difVoltage2/difTime2;
-}
+// --- Derivative calculator (average of last 2 slopes) ---
+float changeinLight(unsigned long times[], float voltages[]) {
+  float difVoltage1 = voltages[2] - voltages[1];
+  unsigned long difTime1 = times[2] - times[1];
+  float lightSlope1 = 0;
 
-lightSlope = (lightSlope1+lightSlope2) /2;
+  float difVoltage2 = voltages[1] - voltages[0];
+  unsigned long difTime2 = times[1] - times[0];
+  float lightSlope2 = 0;
 
-return lightSlope;
+  if (difTime1 != 0) {
+    lightSlope1 = difVoltage1 / float(difTime1);
+  }
+  if (difTime2 != 0) {
+    lightSlope2 = difVoltage2 / float(difTime2);
+  }
+
+  float lightSlope = (lightSlope1 + lightSlope2) / 2.0;
+  return lightSlope;
 }
