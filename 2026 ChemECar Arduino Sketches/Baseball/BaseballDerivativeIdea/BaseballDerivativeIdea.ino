@@ -1,138 +1,87 @@
-bool carRunning;
+bool carRunning = true;
 float voltage;
-bool restartCar = true;
-int count;
-float voltages[5] = {0};
-unsigned long times[5] = {0}; 
-float derLight;
-bool stableInitialVoltage;
-float initialVoltage;
-bool reactionStarted = false;
-bool reactionStopped = false;
+int HighNum = 0;
+//bool Start = false;
+int count = 0;
 
+const float ThresholdChange = 0.005;  // V/s threshold
 const int NUM_SAMPLES = 10;
-const float DERIV_THRESHOLD = 0.0001;  // threshold for "flat"
-const int STABLE_COUNT_REQUIRED = 5;   // number of stable readings to confirm
+const unsigned long SAMPLE_DELAY = 200;  // ms
 
-int stableCount = 0;
+float voltages[3] = {0};
+unsigned long times[3] = {0};
+float derLight;
 
+// --- Setup ---
 void setup() {
-  pinMode(13, OUTPUT);
+  pinMode(12, OUTPUT); // Motor Signal
+  pinMode(13, OUTPUT); // LED 
   pinMode(18, INPUT);  // Pin A4
-  pinMode(6, OUTPUT);
-  carRunning = true;
-  count = 0;
   Serial.begin(9600);
-  stableInitialVoltage = false;
-
-  digitalWrite(13, HIGH); // keep ON initially
+  delay(1000);
+  Serial.println("Time(s), Voltage(V), dV/dt(V/s)");
 }
 
+// --- Main Loop ---
 void loop() {
-  digitalWrite(6, HIGH);
-  voltage = readAveragedVoltage(18, NUM_SAMPLES);
+  if (carRunning) {
+    voltage = readAveragedVoltage(18, NUM_SAMPLES);
+    digitalWrite(12,HIGH); //Start Car Motor
+    shiftData(voltages, times, voltage, millis());
 
-  // Shift arrays
-  for (int i = 0; i < 4; i++) {
-    voltages[i] = voltages[i+1]; 
-    times[i] = times[i+1];
-  }
+    derLight = changeInLight(times, voltages);
 
-  // Store new sample
-  voltages[4] = voltage;
-  times[4] = millis();
+    Serial.print(times[2] / 1000.0, 2);
+    Serial.print(", ");
+    Serial.print(voltage, 3);
+    Serial.print(", ");
+    Serial.println(derLight, 4);
 
-  // Establish stable initial voltage
-  if (!stableInitialVoltage) {
-    bool allEqual = true;
-    for (int i = 1; i < 5; i++) {
-      if (fabs(voltages[i] - voltages[0]) > 0.01) {
-        allEqual = false;
-        break;
-      }
+    if (fabs(derLight) < ThresholdChange) {
+      HighNum++;
     }
-    if (allEqual) {
-      stableInitialVoltage = true;
-      initialVoltage = voltages[0];
+
+    if (HighNum >= 3 && count > 20) {
+      carRunning = false;
+      digitalWrite(12,LOW); // Turn off power to car motor
+      digitalWrite(13,LOW); // Turn off LED 
+      Serial.println("Reaction complete. Stopping monitoring.");
     }
+
+    count++;
+    delay(SAMPLE_DELAY);
   }
-
-  // Derivative
-  derLight = changeinLight(times, voltages);
-
-  // --- Detect reaction start ---
-  if (!reactionStarted && fabs(derLight) > DERIV_THRESHOLD * 10) {  
-    // “10x threshold” so we only start when slope is really moving
-    reactionStarted = true;
-    stableCount = 0; // reset
-  }
-
-  // --- Detect reaction stop (only after start) ---
-  if (reactionStarted && !reactionStopped) {
-    if (fabs(derLight) < DERIV_THRESHOLD) {
-      stableCount++;
-      if (stableCount >= STABLE_COUNT_REQUIRED) {
-        // Check we ended at a different level than initial
-        if (fabs(voltage - initialVoltage) > 0.05) { 
-          reactionStopped = true;
-          digitalWrite(13, LOW);   // turn OFF only when final state reached
-        }
-      }
-    } else {
-      stableCount = 0; // reset if slope not flat
-    }
-  }
-
-  // Print
-  Serial.print(times[4]/1000.0);
-  Serial.print(", ");
-  Serial.print(voltage, 3);
-  Serial.print(", ");
-  Serial.print(derLight, 6);
-  Serial.print(", ");
-  Serial.println("reactionStopped");
-  Serial.println(reactionStopped);
-  Serial.println("reactionStopped");
-  Serial.println(reactionStopped);
-  Serial.println("reactionStarted");
-  Serial.println(reactionStarted);
-
-  if (stableInitialVoltage && initialVoltage > 0 && voltage > 0) {
-    Serial.println(log(voltage/initialVoltage), 9);
-  } else {
-    Serial.println("N/A");
-  }
-
-  delay(200);
 }
 
-// --- Moving average voltage reader ---
+// --- Helper: shift old data, insert new sample ---
+void shiftData(float v[], unsigned long t[], float newV, unsigned long newT) {
+  for (int i = 0; i < 2; i++) {
+    v[i] = v[i + 1];
+    t[i] = t[i + 1];
+  }
+  v[2] = newV;
+  t[2] = newT;
+}
+
+// --- Helper: average multiple ADC samples ---
 float readAveragedVoltage(int pin, int samples) {
   long total = 0;
   for (int i = 0; i < samples; i++) {
     total += analogRead(pin);
   }
   float avgReading = float(total) / samples;
-  return avgReading * 3.3 / 1023.0; // convert to volts
+  return avgReading * 3.3 / 1023.0;
 }
 
-// --- Derivative calculator ---
-float changeinLight(unsigned long times[], float voltages[]) {
-  float difVoltage1 = voltages[4] - voltages[3];
-  unsigned long difTime1 = times[4] - times[3];
-  float lightSlope1 = (difTime1 != 0) ? difVoltage1 / float(difTime1) : 0;
+// --- Helper: calculate derivative (V/s) ---
+float changeInLight(unsigned long times[], float voltages[]) {
+  float dv1 = voltages[2] - voltages[1];
+  float dt1 = (times[2] - times[1]);
+  float dv2 = voltages[1] - voltages[0];
+  float dt2 = (times[1] - times[0]);
 
-  float difVoltage2 = voltages[3] - voltages[2];
-  unsigned long difTime2 = times[3] - times[2];
-  float lightSlope2 = (difTime2 != 0) ? difVoltage2 / float(difTime2) : 0;
+  float slope1 = (dt1 > 0) ? (dv1 / dt1) * 1000.0 : 0;  // convert to V/s
+  float slope2 = (dt2 > 0) ? (dv2 / dt2) * 1000.0 : 0;
 
-  float difVoltage3 = voltages[2] - voltages[1];
-  unsigned long difTime3 = times[2] - times[1];
-  float lightSlope3 = (difTime3 != 0) ? difVoltage3 / float(difTime3) : 0;
-
-  float difVoltage4 = voltages[1] - voltages[0];
-  unsigned long difTime4 = times[1] - times[0];
-  float lightSlope4 = (difTime4 != 0) ? difVoltage4 / float(difTime4) : 0;
-
-  return (lightSlope1 + lightSlope2 + lightSlope3 + lightSlope4) / 4.0;
+  return (slope1 + slope2) / 2.0;
 }
