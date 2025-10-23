@@ -1,56 +1,82 @@
-bool carRunning = true;
+bool carRunning = false;
 float voltage;
-int HighNum = 0;
-//bool Start = false;
+int HighNum = 0;          // counter for "low" derivative (stop)
+int HighStartCount = 0;   // counter for "high" derivative (start)
 int count = 0;
+bool carOperating = true;
 
-const float ThresholdChange = 0.005;  // V/s threshold
+const float ThresholdChange = 0.005;  // baseline V/s threshold
+// Optional hysteresis: slightly different start/stop thresholds
+const float StartThreshold = 0.010;    // could be 0.006
+const float StopThreshold  = ThresholdChange;    // could be 0.004
+
 const int NUM_SAMPLES = 10;
 const unsigned long SAMPLE_DELAY = 200;  // ms
+const int CONFIRM_COUNT = 3;             // consecutive samples required
 
 float voltages[3] = {0};
 unsigned long times[3] = {0};
 float derLight;
 
-// --- Setup ---
 void setup() {
-  pinMode(12, OUTPUT); // Motor Signal
-  pinMode(13, OUTPUT); // LED 
-  pinMode(18, INPUT);  // Pin A4
+  pinMode(12, OUTPUT); // Motor control (MOSFET gate)
+  pinMode(13, OUTPUT); // LED indicator
+  pinMode(18, INPUT);  // Analog input (A4)
   Serial.begin(9600);
   delay(1000);
   Serial.println("Time(s), Voltage(V), dV/dt(V/s)");
 }
 
-// --- Main Loop ---
 void loop() {
-  if (carRunning) {
-    voltage = readAveragedVoltage(18, NUM_SAMPLES);
-    digitalWrite(12,HIGH); //Start Car Motor
-    shiftData(voltages, times, voltage, millis());
+  if (carOperating) {
+  // --- Read and compute derivative ---
+  voltage = readAveragedVoltage(18, NUM_SAMPLES);
+  shiftData(voltages, times, voltage, millis());
+  derLight = changeInLight(times, voltages);
 
-    derLight = changeInLight(times, voltages);
+  Serial.print(times[2] / 1000.0, 2);
+  Serial.print(", ");
+  Serial.print(voltage, 3);
+  Serial.print(", ");
+  Serial.println(derLight, 4);
 
-    Serial.print(times[2] / 1000.0, 2);
-    Serial.print(", ");
-    Serial.print(voltage, 3);
-    Serial.print(", ");
-    Serial.println(derLight, 4);
-
-    if (fabs(derLight) < ThresholdChange) {
-      HighNum++;
+  // --- START condition (noise protected) ---
+  if (!carRunning) {
+    if (fabs(derLight) > StartThreshold) {
+      HighStartCount++;
+    } else {
+      HighStartCount = 0;
     }
 
-    if (HighNum >= 3 && count > 20) {
+    if (HighStartCount >= CONFIRM_COUNT) {
+      carRunning = true;
+      digitalWrite(12, HIGH); // Turn on MOSFET (start motor)
+      digitalWrite(13, HIGH); // Turn on LED
+      Serial.println("Derivative HIGH (confirmed) -> Starting car motor.");
+    }
+  }
+
+  // --- STOP condition (noise protected) ---
+  if (carRunning) {
+    if (fabs(derLight) < StopThreshold) {
+      HighNum++;
+    } else {
+      HighNum = 0;
+    }
+
+    if (HighNum >= CONFIRM_COUNT && count > 20) {
       carRunning = false;
-      digitalWrite(12,LOW); // Turn off power to car motor
-      digitalWrite(13,LOW); // Turn off LED 
-      Serial.println("Reaction complete. Stopping monitoring.");
+      digitalWrite(12, LOW); // Turn off MOSFET (stop motor)
+      digitalWrite(13, LOW); // Turn off LED
+      Serial.println("Derivative LOW (confirmed) -> Stopping car motor.");
+      carOperating = false;
     }
 
     count++;
-    delay(SAMPLE_DELAY);
   }
+
+  delay(SAMPLE_DELAY);
+  } 
 }
 
 // --- Helper: shift old data, insert new sample ---
