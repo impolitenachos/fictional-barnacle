@@ -4,6 +4,8 @@ int HighNum = 0;          // counter for "low" derivative (stop)
 int HighStartCount = 0;   // counter for "high" derivative (start)
 int count = 0;
 bool carOperating = true;
+float stopTime;
+float startTime;
 
 const float ThresholdChange = 0.005;  // baseline V/s threshold
 // Optional hysteresis: slightly different start/stop thresholds
@@ -53,6 +55,7 @@ void loop() {
       digitalWrite(12, HIGH); // Turn on MOSFET (start motor)
       digitalWrite(13, HIGH); // Turn on LED
       Serial.println("Derivative HIGH (confirmed) -> Starting car motor.");
+      startTime = millis();
     }
   }
 
@@ -68,8 +71,11 @@ void loop() {
       carRunning = false;
       digitalWrite(12, LOW); // Turn off MOSFET (stop motor)
       digitalWrite(13, LOW); // Turn off LED
+      stopTime = millis();
       Serial.println("Derivative LOW (confirmed) -> Stopping car motor.");
       carOperating = false;
+      Serial.print("Elapsed car runtime: ");
+      Serial.println(stopTime - startTime);
     }
 
     count++;
